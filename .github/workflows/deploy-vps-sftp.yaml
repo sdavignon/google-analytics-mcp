@@ -1,0 +1,85 @@
+# Builds the Python package and deploys the generated artifacts to a VPS over SFTP.
+# Configure the required repository/environment secrets before running:
+# - VPS_HOST: VPS hostname or IP address.
+# - VPS_USERNAME: SFTP username.
+# - VPS_PASSWORD: SFTP password for the VPS user.
+# - VPS_DEPLOY_PATH: Absolute remote directory for uploaded artifacts.
+# Optional repository/environment variables:
+# - VPS_PORT: SFTP port. Defaults to 22.
+# - PYTHON_VERSION: Python version used for the build. Defaults to 3.13.
+name: Deploy to VPS via SFTP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vps-sftp
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PYTHON_VERSION: ${{ vars.PYTHON_VERSION || '3.13' }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+      VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+      VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Prepare deployment bundle
+        run: |
+          set -euo pipefail
+          mkdir -p deploy
+          cp -R dist deploy/dist
+          cp pyproject.toml README.md LICENSE deploy/
+          tar -C deploy -czf analytics-mcp-deploy.tar.gz .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: analytics-mcp-deploy
+          path: analytics-mcp-deploy.tar.gz
+          if-no-files-found: error
+
+      - name: Install SFTP client
+        run: sudo apt-get update && sudo apt-get install -y lftp openssh-client
+
+      - name: Trust VPS host key
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy bundle over SFTP
+        env:
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          lftp \
+            -u "$VPS_USERNAME,$VPS_PASSWORD" \
+            -e "set sftp:connect-program 'ssh -a -x -o StrictHostKeyChecking=yes -p $VPS_PORT'; mkdir -p '$VPS_DEPLOY_PATH'; cd '$VPS_DEPLOY_PATH'; put -O . analytics-mcp-deploy.tar.gz; bye" \
+            "sftp://$VPS_HOST"
