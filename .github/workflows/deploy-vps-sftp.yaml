@@ -1,5 +1,5 @@
 # Builds the Python package, uploads it to the VPS, and activates it with a remote deploy script.
-# Configure the required "Productions" environment secrets before running:
+# Configure the required "Production" environment secrets before running:
 # - VPS_HOST: VPS hostname or IP address.
 # - VPS_USERNAME: SSH/SFTP username.
 # - VPS_PASSWORD: SSH/SFTP password for the VPS user.
@@ -26,7 +26,7 @@ jobs:
   build-and-deploy:
     name: Build and deploy
     runs-on: ubuntu-latest
-    environment: Productions
+    environment: Production
     env:
       PYTHON_VERSION: ${{ vars.PYTHON_VERSION || '3.13' }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -80,7 +80,7 @@ jobs:
           missing=0
           for name in VPS_HOST VPS_USERNAME VPS_PASSWORD VPS_DEPLOY_PATH; do
             if [ -z "${!name}" ]; then
-              echo "::error title=Missing deploy secret::$name is not configured for the Productions environment or repository."
+              echo "::error title=Missing deploy secret::$name is not configured for the Production environment or repository."
               missing=1
             fi
           done
