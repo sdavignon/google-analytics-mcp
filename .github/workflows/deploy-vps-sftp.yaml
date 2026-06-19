@@ -1,9 +1,9 @@
-# Builds the Python package, uploads it to the VPS, and activates it with a remote deploy script.
+# Builds the Python package, uploads it to the VPS, and deploys the app files at the web root.
 # Configure the required "Production" environment secrets before running:
 # - VPS_HOST: VPS hostname or IP address.
 # - VPS_USERNAME: SSH/SFTP username.
 # - VPS_PASSWORD: SSH/SFTP password for the VPS user.
-# - VPS_DEPLOY_PATH: Absolute remote application directory, for example /home/user/app.example.com.
+# - VPS_DEPLOY_PATH: Absolute remote web/application directory, for example /home/user/app.example.com.
 # Optional repository/environment variables:
 # - VPS_PORT: SSH/SFTP port. Defaults to 22.
 # - PYTHON_VERSION: Python version used for the build. Defaults to 3.13.
