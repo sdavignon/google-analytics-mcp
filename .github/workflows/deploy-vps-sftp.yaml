@@ -1,11 +1,11 @@
-# Builds the Python package and deploys the generated artifacts to a VPS over SFTP.
-# Configure the required repository/environment secrets before running:
+# Builds the Python package, uploads it to the VPS, and activates it with a remote deploy script.
+# Configure the required "Productions" environment secrets before running:
 # - VPS_HOST: VPS hostname or IP address.
-# - VPS_USERNAME: SFTP username.
-# - VPS_PASSWORD: SFTP password for the VPS user.
-# - VPS_DEPLOY_PATH: Absolute remote directory for uploaded artifacts.
+# - VPS_USERNAME: SSH/SFTP username.
+# - VPS_PASSWORD: SSH/SFTP password for the VPS user.
+# - VPS_DEPLOY_PATH: Absolute remote application directory, for example /home/user/app.example.com.
 # Optional repository/environment variables:
-# - VPS_PORT: SFTP port. Defaults to 22.
+# - VPS_PORT: SSH/SFTP port. Defaults to 22.
 # - PYTHON_VERSION: Python version used for the build. Defaults to 3.13.
 name: Deploy to VPS via SFTP
 
@@ -26,13 +26,14 @@ jobs:
   build-and-deploy:
     name: Build and deploy
     runs-on: ubuntu-latest
-    environment: production
+    environment: Productions
     env:
       PYTHON_VERSION: ${{ vars.PYTHON_VERSION || '3.13' }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_PORT: ${{ vars.VPS_PORT || '22' }}
       VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
       VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+      REVISION: ${{ github.sha }}
 
     steps:
       - name: Check out repository
@@ -53,9 +54,12 @@ jobs:
       - name: Prepare deployment bundle
         run: |
           set -euo pipefail
+          rm -rf deploy analytics-mcp-deploy.tar.gz
           mkdir -p deploy
+          cp -R analytics_mcp deploy/analytics_mcp
           cp -R dist deploy/dist
           cp pyproject.toml README.md LICENSE deploy/
+          printf '%s\n' "$REVISION" > deploy/REVISION
           tar -C deploy -czf analytics-mcp-deploy.tar.gz .
 
       - name: Upload build artifact
@@ -65,8 +69,24 @@ jobs:
           path: analytics-mcp-deploy.tar.gz
           if-no-files-found: error
 
-      - name: Install SFTP client
-        run: sudo apt-get update && sudo apt-get install -y lftp openssh-client
+      - name: Install deployment clients
+        run: sudo apt-get update && sudo apt-get install -y lftp openssh-client sshpass
+
+      - name: Validate deploy configuration
+        env:
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in VPS_HOST VPS_USERNAME VPS_PASSWORD VPS_DEPLOY_PATH; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing deploy secret::$name is not configured for the Productions environment or repository."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Trust VPS host key
         run: |
@@ -74,12 +94,23 @@ jobs:
           install -m 700 -d ~/.ssh
           ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
-      - name: Deploy bundle over SFTP
+      - name: Upload bundle and deploy script over SFTP
         env:
           VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
         run: |
           set -euo pipefail
           lftp \
             -u "$VPS_USERNAME,$VPS_PASSWORD" \
-            -e "set sftp:connect-program 'ssh -a -x -o StrictHostKeyChecking=yes -p $VPS_PORT'; mkdir -p '$VPS_DEPLOY_PATH'; cd '$VPS_DEPLOY_PATH'; put -O . analytics-mcp-deploy.tar.gz; bye" \
+            -e "set sftp:connect-program 'ssh -a -x -o StrictHostKeyChecking=yes -p $VPS_PORT'; mkdir -p '$VPS_DEPLOY_PATH/.deploy'; cd '$VPS_DEPLOY_PATH/.deploy'; put -O . analytics-mcp-deploy.tar.gz; put -O . .github/scripts/deploy-vps.sh; bye" \
             "sftp://$VPS_HOST"
+
+      - name: Activate release over SSH
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          sshpass -e ssh \
+            -p "$VPS_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$VPS_USERNAME@$VPS_HOST" \
+            "bash '$VPS_DEPLOY_PATH/.deploy/deploy-vps.sh' '$VPS_DEPLOY_PATH' '$REVISION'"
