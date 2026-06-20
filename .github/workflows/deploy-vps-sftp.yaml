@@ -59,6 +59,42 @@ jobs:
           cp -R analytics_mcp deploy/analytics_mcp
           cp -R dist deploy/dist
           cp pyproject.toml README.md LICENSE deploy/
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path('pyproject.toml').read_text())['project']
+          Path('deploy/requirements.txt').write_text('\n'.join(project.get('dependencies', [])) + '\n')
+          PY
+          cat > deploy/server.py <<'PY'
+          #!/usr/bin/env python3
+          """Root-level launcher for DreamHost/VPS deployments."""
+
+          from analytics_mcp.server import run_server
+
+
+          if __name__ == "__main__":
+              run_server()
+          PY
+          cat > deploy/passenger_wsgi.py <<'PY'
+          """Minimal DreamHost Passenger WSGI entrypoint for deployment health checks.
+
+          The Analytics MCP server itself runs over stdio via server.py or the
+          analytics-mcp console script. This WSGI app exists so Passenger-based
+          hosting has an application file at the web root.
+          """
+
+
+          def application(environ, start_response):
+              body = b"analytics-mcp deployment is present. Start the MCP server with server.py or analytics-mcp.\n"
+              headers = [
+                  ("Content-Type", "text/plain; charset=utf-8"),
+                  ("Content-Length", str(len(body))),
+              ]
+              start_response("200 OK", headers)
+              return [body]
+          PY
+          chmod +x deploy/server.py
           printf '%s\n' "$REVISION" > deploy/REVISION
           tar -C deploy -czf analytics-mcp-deploy.tar.gz .
 

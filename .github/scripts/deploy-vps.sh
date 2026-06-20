@@ -29,6 +29,9 @@ rm -rf \
   "$DEPLOY_PATH/pyproject.toml" \
   "$DEPLOY_PATH/README.md" \
   "$DEPLOY_PATH/LICENSE" \
+  "$DEPLOY_PATH/requirements.txt" \
+  "$DEPLOY_PATH/server.py" \
+  "$DEPLOY_PATH/passenger_wsgi.py" \
   "$DEPLOY_PATH/REVISION" \
   "$DEPLOY_PATH/analytics-mcp-deploy.tar.gz"
 
