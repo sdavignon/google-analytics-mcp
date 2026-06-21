@@ -225,6 +225,8 @@ jobs:
           test "$REVISION" = "$EXPECTED_REVISION"
           test -x "$DEPLOY_PATH/start.sh"
           test -x "$START_COMMAND"
-          "$PYTHON_COMMAND" -c 'import analytics_mcp.server; print("analytics_mcp import ok")'
+          PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning" \
+            "$PYTHON_COMMAND" -c 'import analytics_mcp.server; print("analytics_mcp import ok")'
           test -f "$DEPLOY_PATH/health.json"
+          echo "Remote smoke test passed for $REVISION using $START_COMMAND"
           REMOTE
