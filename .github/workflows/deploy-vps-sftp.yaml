@@ -7,6 +7,7 @@
 # Optional repository/environment variables:
 # - VPS_PORT: SSH/SFTP port. Defaults to 22.
 # - PYTHON_VERSION: Python version used for the build. Defaults to 3.13.
+# - VPS_PYTHON_BIN: Python executable on the VPS used for the virtualenv. Defaults to python3.
 name: Deploy to VPS via SFTP
 
 on:
@@ -34,6 +35,7 @@ jobs:
       VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
       VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
       REVISION: ${{ github.sha }}
+      VPS_PYTHON_BIN: ${{ vars.VPS_PYTHON_BIN || 'python3' }}
 
     steps:
       - name: Check out repository
@@ -76,6 +78,56 @@ jobs:
           if __name__ == "__main__":
               run_server()
           PY
+          cat > deploy/start.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "$(dirname "$0")"
+          exec ./.venv/bin/analytics-mcp "$@"
+          SH
+          chmod +x deploy/start.sh
+          cat > deploy/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Analytics MCP Deployment</title>
+              <style>
+                body {
+                  margin: 0;
+                  min-height: 100vh;
+                  display: grid;
+                  place-items: center;
+                  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                  background: #f8fafc;
+                  color: #0f172a;
+                }
+                main {
+                  max-width: 720px;
+                  padding: 2rem;
+                  border-radius: 1rem;
+                  background: #fff;
+                  box-shadow: 0 20px 45px rgb(15 23 42 / 10%);
+                }
+                code {
+                  display: inline-block;
+                  padding: .2rem .4rem;
+                  border-radius: .35rem;
+                  background: #e2e8f0;
+                }
+              </style>
+            </head>
+            <body>
+              <main>
+                <h1>Analytics MCP is deployed</h1>
+                <p>The VPS deployment completed and the application files are present at the web root.</p>
+                <p>This project is an MCP stdio server, not a browser-based web app. Start it on the VPS with <code>./start.sh</code> or the installed <code>.venv/bin/analytics-mcp</code> command.</p>
+                <p>Revision: <code>__REVISION__</code></p>
+              </main>
+            </body>
+          </html>
+          HTML
+          sed -i "s/__REVISION__/$REVISION/g" deploy/index.html
           cat > deploy/passenger_wsgi.py <<'PY'
           """Minimal DreamHost Passenger WSGI entrypoint for deployment health checks.
 
@@ -149,4 +201,4 @@ jobs:
             -p "$VPS_PORT" \
             -o StrictHostKeyChecking=yes \
             "$VPS_USERNAME@$VPS_HOST" \
-            "bash '$VPS_DEPLOY_PATH/.deploy/deploy-vps.sh' '$VPS_DEPLOY_PATH' '$REVISION'"
+            "bash '$VPS_DEPLOY_PATH/.deploy/deploy-vps.sh' '$VPS_DEPLOY_PATH' '$REVISION' '$VPS_PYTHON_BIN'"

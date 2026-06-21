@@ -2,7 +2,8 @@
 set -euo pipefail
 
 DEPLOY_PATH="${1:?Usage: deploy-vps.sh <deploy-path> <revision>}"
-REVISION="${2:?Usage: deploy-vps.sh <deploy-path> <revision>}"
+REVISION="${2:?Usage: deploy-vps.sh <deploy-path> <revision> [python-bin]}"
+PYTHON_BIN="${3:-python3}"
 DEPLOY_DIR="$DEPLOY_PATH/.deploy"
 ARCHIVE="$DEPLOY_DIR/analytics-mcp-deploy.tar.gz"
 RELEASES_DIR="$DEPLOY_DIR/releases"
@@ -32,11 +33,20 @@ rm -rf \
   "$DEPLOY_PATH/requirements.txt" \
   "$DEPLOY_PATH/server.py" \
   "$DEPLOY_PATH/passenger_wsgi.py" \
+  "$DEPLOY_PATH/start.sh" \
+  "$DEPLOY_PATH/index.html" \
   "$DEPLOY_PATH/REVISION" \
   "$DEPLOY_PATH/analytics-mcp-deploy.tar.gz"
 
 cp -a "$RELEASE_DIR"/. "$DEPLOY_PATH"/
 rm -f "$ARCHIVE"
+
+VENV_DIR="$DEPLOY_PATH/.venv"
+"$PYTHON_BIN" -m venv "$VENV_DIR"
+"$VENV_DIR/bin/python" -m pip install --upgrade pip
+"$VENV_DIR/bin/python" -m pip install --force-reinstall "$DEPLOY_PATH"/dist/*.whl
+mkdir -p "$DEPLOY_PATH/tmp"
+touch "$DEPLOY_PATH/tmp/restart.txt"
 
 # Keep the latest five release snapshots for troubleshooting without filling the VPS.
 if command -v find >/dev/null 2>&1; then
@@ -50,4 +60,6 @@ if command -v find >/dev/null 2>&1; then
 fi
 
 echo "Deployed $REVISION to $DEPLOY_PATH"
+echo "Installed virtual environment: $VENV_DIR"
+echo "Start command: $DEPLOY_PATH/start.sh"
 echo "Release snapshot: $RELEASE_DIR"
