@@ -131,6 +131,10 @@ jobs:
           </html>
           HTML
           sed -i "s/__REVISION__/$REVISION/g" deploy/index.html
+          cat > deploy/health.json <<'JSON'
+          {"status":"deployed","service":"analytics-mcp","revision":"__REVISION__"}
+          JSON
+          sed -i "s/__REVISION__/$REVISION/g" deploy/health.json
           cat > deploy/passenger_wsgi.py <<'PY'
           """Minimal DreamHost Passenger WSGI entrypoint for deployment health checks.
 
@@ -205,3 +209,22 @@ jobs:
             -o StrictHostKeyChecking=yes \
             "$VPS_USERNAME@$VPS_HOST" \
             "bash '$VPS_DEPLOY_PATH/.deploy/deploy-vps.sh' '$VPS_DEPLOY_PATH' '$REVISION' '$VPS_PYTHON_BIN'"
+
+      - name: Smoke test deployed application
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          sshpass -e ssh \
+            -p "$VPS_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$VPS_USERNAME@$VPS_HOST" \
+            "DEPLOY_PATH='$VPS_DEPLOY_PATH' EXPECTED_REVISION='$REVISION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          source "$DEPLOY_PATH/.deploy/last-deploy.env"
+          test "$REVISION" = "$EXPECTED_REVISION"
+          test -x "$DEPLOY_PATH/start.sh"
+          test -x "$START_COMMAND"
+          "$PYTHON_COMMAND" -c 'import analytics_mcp.server; print("analytics_mcp import ok")'
+          test -f "$DEPLOY_PATH/health.json"
+          REMOTE

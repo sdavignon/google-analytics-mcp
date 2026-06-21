@@ -35,6 +35,7 @@ rm -rf \
   "$DEPLOY_PATH/passenger_wsgi.py" \
   "$DEPLOY_PATH/start.sh" \
   "$DEPLOY_PATH/index.html" \
+  "$DEPLOY_PATH/health.json" \
   "$DEPLOY_PATH/REVISION" \
   "$DEPLOY_PATH/analytics-mcp-deploy.tar.gz"
 
@@ -49,6 +50,7 @@ fi
 
 VENV_DIR="$DEPLOY_PATH/.venv"
 START_COMMAND="$VENV_DIR/bin/analytics-mcp"
+PYTHON_COMMAND="$VENV_DIR/bin/python"
 INSTALL_MODE="virtualenv"
 rm -rf "$VENV_DIR"
 if "$PYTHON_BIN" -m venv "$VENV_DIR"; then
@@ -59,6 +61,7 @@ else
   "$PYTHON_BIN" -m pip install --user --upgrade --force-reinstall "$WHEEL_PATH"
   USER_BASE=$("$PYTHON_BIN" -m site --user-base)
   START_COMMAND="$USER_BASE/bin/analytics-mcp"
+  PYTHON_COMMAND="$PYTHON_BIN"
   INSTALL_MODE="user"
 fi
 
@@ -68,6 +71,13 @@ set -euo pipefail
 exec "$START_COMMAND" "\$@"
 EOF_START
 chmod +x "$DEPLOY_PATH/start.sh"
+
+cat > "$DEPLOY_DIR/last-deploy.env" <<EOF_ENV
+REVISION=$(printf %q "$REVISION")
+INSTALL_MODE=$(printf %q "$INSTALL_MODE")
+PYTHON_COMMAND=$(printf %q "$PYTHON_COMMAND")
+START_COMMAND=$(printf %q "$START_COMMAND")
+EOF_ENV
 
 mkdir -p "$DEPLOY_PATH/tmp"
 touch "$DEPLOY_PATH/tmp/restart.txt"
@@ -86,5 +96,6 @@ fi
 echo "Deployed $REVISION to $DEPLOY_PATH"
 echo "Install mode: $INSTALL_MODE"
 echo "Start command: $DEPLOY_PATH/start.sh"
+echo "Resolved Python command: $PYTHON_COMMAND"
 echo "Resolved app command: $START_COMMAND"
 echo "Release snapshot: $RELEASE_DIR"
