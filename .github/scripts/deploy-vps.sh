@@ -41,10 +41,34 @@ rm -rf \
 cp -a "$RELEASE_DIR"/. "$DEPLOY_PATH"/
 rm -f "$ARCHIVE"
 
+WHEEL_PATH=$(find "$DEPLOY_PATH/dist" -maxdepth 1 -type f -name '*.whl' | head -n 1)
+if [ -z "$WHEEL_PATH" ]; then
+  echo "No wheel file was found in $DEPLOY_PATH/dist" >&2
+  exit 1
+fi
+
 VENV_DIR="$DEPLOY_PATH/.venv"
-"$PYTHON_BIN" -m venv "$VENV_DIR"
-"$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install --force-reinstall "$DEPLOY_PATH"/dist/*.whl
+START_COMMAND="$VENV_DIR/bin/analytics-mcp"
+INSTALL_MODE="virtualenv"
+rm -rf "$VENV_DIR"
+if "$PYTHON_BIN" -m venv "$VENV_DIR"; then
+  "$VENV_DIR/bin/python" -m pip install --upgrade pip
+  "$VENV_DIR/bin/python" -m pip install --force-reinstall "$WHEEL_PATH"
+else
+  echo "Could not create a virtualenv with $PYTHON_BIN; falling back to a user-level pip install." >&2
+  "$PYTHON_BIN" -m pip install --user --upgrade --force-reinstall "$WHEEL_PATH"
+  USER_BASE=$("$PYTHON_BIN" -m site --user-base)
+  START_COMMAND="$USER_BASE/bin/analytics-mcp"
+  INSTALL_MODE="user"
+fi
+
+cat > "$DEPLOY_PATH/start.sh" <<EOF_START
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$START_COMMAND" "\$@"
+EOF_START
+chmod +x "$DEPLOY_PATH/start.sh"
+
 mkdir -p "$DEPLOY_PATH/tmp"
 touch "$DEPLOY_PATH/tmp/restart.txt"
 
@@ -60,6 +84,7 @@ if command -v find >/dev/null 2>&1; then
 fi
 
 echo "Deployed $REVISION to $DEPLOY_PATH"
-echo "Installed virtual environment: $VENV_DIR"
+echo "Install mode: $INSTALL_MODE"
 echo "Start command: $DEPLOY_PATH/start.sh"
+echo "Resolved app command: $START_COMMAND"
 echo "Release snapshot: $RELEASE_DIR"

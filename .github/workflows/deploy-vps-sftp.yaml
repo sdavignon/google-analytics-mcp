@@ -82,7 +82,10 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           cd "$(dirname "$0")"
-          exec ./.venv/bin/analytics-mcp "$@"
+          if [ -x ./.venv/bin/analytics-mcp ]; then
+            exec ./.venv/bin/analytics-mcp "$@"
+          fi
+          exec analytics-mcp "$@"
           SH
           chmod +x deploy/start.sh
           cat > deploy/index.html <<'HTML'
