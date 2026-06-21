@@ -150,6 +150,9 @@ jobs:
           cat > deploy/.htaccess <<'HTACCESS'
           Options -Indexes
           DirectoryIndex index.html
+          RewriteEngine On
+          RewriteRule ^health/?$ http://127.0.0.1:8000/health [P,L]
+          RewriteRule ^mcp(/.*)?$ http://127.0.0.1:8000/mcp$1 [P,L]
 
           <FilesMatch "\.(py|toml|md|txt|gz|whl)$">
             Require all denied
@@ -279,6 +282,13 @@ jobs:
           if [ -f "$DEPLOY_PATH/.deploy/app.pid" ]; then
             kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")"
           fi
+          PORT_VALUE=$(grep '^PORT=' "$DEPLOY_PATH/.env" 2>/dev/null | cut -d= -f2- || true)
+          MCP_HTTP_PORT_VALUE=$(grep '^MCP_HTTP_PORT=' "$DEPLOY_PATH/.env" 2>/dev/null | cut -d= -f2- || true)
+          LOCAL_PORT="${PORT_VALUE:-${MCP_HTTP_PORT_VALUE:-8000}}"
+          export LOCAL_PORT
+          "$PYTHON_COMMAND" -c 'import os, urllib.request; print(urllib.request.urlopen("http://127.0.0.1:{}/health".format(os.environ["LOCAL_PORT"]), timeout=10).read().decode())'
+          grep -q 'RewriteRule ^mcp' "$DEPLOY_PATH/.htaccess"
+          grep -q 'RewriteRule ^health' "$DEPLOY_PATH/.htaccess"
           PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning" \
             "$PYTHON_COMMAND" -c 'import analytics_mcp.http_server; print("analytics_mcp http import ok")'
           test -f "$DEPLOY_PATH/health.json"

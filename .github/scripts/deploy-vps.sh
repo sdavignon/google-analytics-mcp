@@ -82,6 +82,21 @@ exec "$START_COMMAND" --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP
 EOF_START
 chmod +x "$DEPLOY_PATH/start.sh"
 
+MCP_HTTP_BIND_HOST="${MCP_HTTP_HOST:-127.0.0.1}"
+MCP_HTTP_BIND_PORT="${PORT:-${MCP_HTTP_PORT:-8000}}"
+
+cat > "$DEPLOY_PATH/.htaccess" <<EOF_HTACCESS
+Options -Indexes
+DirectoryIndex index.html
+RewriteEngine On
+RewriteRule ^health/?$ http://$MCP_HTTP_BIND_HOST:$MCP_HTTP_BIND_PORT/health [P,L]
+RewriteRule ^mcp(/.*)?$ http://$MCP_HTTP_BIND_HOST:$MCP_HTTP_BIND_PORT/mcp\$1 [P,L]
+
+<FilesMatch "\.(py|toml|md|txt|gz|whl)$">
+  Require all denied
+</FilesMatch>
+EOF_HTACCESS
+
 if [ "${AUTO_START_MCP_HTTP:-1}" = "1" ]; then
   if [ -f "$DEPLOY_DIR/app.pid" ] && kill -0 "$(cat "$DEPLOY_DIR/app.pid")" 2>/dev/null; then
     kill "$(cat "$DEPLOY_DIR/app.pid")"
