@@ -1,0 +1,286 @@
+# Builds the Python package, uploads it to the VPS, and deploys the app files at the web root.
+# Configure the required "Production" environment secrets before running:
+# - VPS_HOST: VPS hostname or IP address.
+# - VPS_USERNAME: SSH/SFTP username.
+# - VPS_PASSWORD: SSH/SFTP password for the VPS user.
+# - VPS_DEPLOY_PATH: Absolute remote web/application directory, for example /home/user/app.example.com.
+# Optional repository/environment variables:
+# - VPS_PORT: SSH/SFTP port. Defaults to 22.
+# - PYTHON_VERSION: Python version used for the build. Defaults to 3.13.
+# - VPS_PYTHON_BIN: Python executable on the VPS used for the virtualenv. Defaults to python3.
+# Optional Google Analytics runtime configuration:
+# - GOOGLE_APPLICATION_CREDENTIALS_JSON: Secret containing ADC/service-account JSON; do not use an API key.
+# - GOOGLE_PROJECT_ID: Repository/environment variable or secret for the Google Cloud project ID.
+name: Deploy to VPS via SFTP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vps-sftp
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment: Production
+    env:
+      PYTHON_VERSION: ${{ vars.PYTHON_VERSION || '3.13' }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_PORT: ${{ vars.VPS_PORT || '22' }}
+      VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+      VPS_DEPLOY_PATH: ${{ secrets.VPS_DEPLOY_PATH }}
+      REVISION: ${{ github.sha }}
+      VPS_PYTHON_BIN: ${{ vars.VPS_PYTHON_BIN || 'python3' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Prepare deployment bundle
+        run: |
+          set -euo pipefail
+          rm -rf deploy analytics-mcp-deploy.tar.gz
+          mkdir -p deploy
+          cp -R analytics_mcp deploy/analytics_mcp
+          cp -R dist deploy/dist
+          cp pyproject.toml README.md LICENSE deploy/
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path('pyproject.toml').read_text())['project']
+          Path('deploy/requirements.txt').write_text('\n'.join(project.get('dependencies', [])) + '\n')
+          PY
+          cat > deploy/server.py <<'PY'
+          #!/usr/bin/env python3
+          """Root-level launcher for DreamHost/VPS deployments."""
+
+          from analytics_mcp.server import run_server
+
+
+          if __name__ == "__main__":
+              run_server()
+          PY
+          cat > deploy/start.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "$(dirname "$0")"
+          if [ -f ./.env ]; then
+            set -a
+            . ./.env
+            set +a
+          fi
+          if [ -f ./.secrets/google-application-credentials.json ]; then
+            export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/.secrets/google-application-credentials.json"
+          fi
+          if [ -x ./.venv/bin/analytics-mcp-http ]; then
+            exec ./.venv/bin/analytics-mcp-http --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "$@"
+          fi
+          exec analytics-mcp-http --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "$@"
+          SH
+          chmod +x deploy/start.sh
+          cat > deploy/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Analytics MCP Deployment</title>
+              <style>
+                body {
+                  margin: 0;
+                  min-height: 100vh;
+                  display: grid;
+                  place-items: center;
+                  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                  background: #f8fafc;
+                  color: #0f172a;
+                }
+                main {
+                  max-width: 720px;
+                  padding: 2rem;
+                  border-radius: 1rem;
+                  background: #fff;
+                  box-shadow: 0 20px 45px rgb(15 23 42 / 10%);
+                }
+                code {
+                  display: inline-block;
+                  padding: .2rem .4rem;
+                  border-radius: .35rem;
+                  background: #e2e8f0;
+                }
+              </style>
+            </head>
+            <body>
+              <main>
+                <h1>Analytics MCP is deployed</h1>
+                <p>The VPS deployment completed and the application files are present at the web root.</p>
+                <p>This project exposes MCP over Streamable HTTP when <code>./start.sh</code> is running behind your web server or reverse proxy.</p>
+                <p>MCP endpoint: <code>/mcp</code>. Health endpoint: <code>/health</code>.</p>
+                <p>Revision: <code>__REVISION__</code></p>
+              </main>
+            </body>
+          </html>
+          HTML
+          sed -i "s/__REVISION__/$REVISION/g" deploy/index.html
+          cat > deploy/health.json <<'JSON'
+          {"status":"deployed","service":"analytics-mcp","revision":"__REVISION__"}
+          JSON
+          sed -i "s/__REVISION__/$REVISION/g" deploy/health.json
+          cat > deploy/.htaccess <<'HTACCESS'
+          Options -Indexes
+          DirectoryIndex index.html
+
+          <FilesMatch "\.(py|toml|md|txt|gz|whl)$">
+            Require all denied
+          </FilesMatch>
+          HTACCESS
+          cat > deploy/passenger_wsgi.py <<'PY'
+          """Minimal DreamHost Passenger WSGI entrypoint for deployment health checks.
+
+          The Analytics MCP server itself runs over stdio via server.py or the
+          analytics-mcp console script. This WSGI app exists so Passenger-based
+          hosting has an application file at the web root.
+          """
+
+
+          def application(environ, start_response):
+              body = b"analytics-mcp deployment is present. Start the MCP server with server.py or analytics-mcp.\n"
+              headers = [
+                  ("Content-Type", "text/plain; charset=utf-8"),
+                  ("Content-Length", str(len(body))),
+              ]
+              start_response("200 OK", headers)
+              return [body]
+          PY
+          chmod +x deploy/server.py
+          printf '%s\n' "$REVISION" > deploy/REVISION
+          tar -C deploy -czf analytics-mcp-deploy.tar.gz .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: analytics-mcp-deploy
+          path: analytics-mcp-deploy.tar.gz
+          if-no-files-found: error
+
+      - name: Install deployment clients
+        run: sudo apt-get update && sudo apt-get install -y lftp openssh-client sshpass
+
+      - name: Validate deploy configuration
+        env:
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in VPS_HOST VPS_USERNAME VPS_PASSWORD VPS_DEPLOY_PATH; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing deploy secret::$name is not configured for the Production environment or repository."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Trust VPS host key
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload bundle and deploy script over SFTP
+        env:
+          VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          lftp \
+            -u "$VPS_USERNAME,$VPS_PASSWORD" \
+            -e "set sftp:connect-program 'ssh -a -x -o StrictHostKeyChecking=yes -p $VPS_PORT'; mkdir -p '$VPS_DEPLOY_PATH/.deploy'; cd '$VPS_DEPLOY_PATH/.deploy'; put -O . analytics-mcp-deploy.tar.gz; put -O . .github/scripts/deploy-vps.sh; bye" \
+            "sftp://$VPS_HOST"
+
+      - name: Activate release over SSH
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          sshpass -e ssh \
+            -p "$VPS_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$VPS_USERNAME@$VPS_HOST" \
+            "bash '$VPS_DEPLOY_PATH/.deploy/deploy-vps.sh' '$VPS_DEPLOY_PATH' '$REVISION' '$VPS_PYTHON_BIN'"
+
+      - name: Install Google credentials on VPS
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          GOOGLE_PROJECT_ID: ${{ vars.GOOGLE_PROJECT_ID || secrets.GOOGLE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
+            echo "No GOOGLE_APPLICATION_CREDENTIALS_JSON secret configured; skipping Google credentials install."
+            exit 0
+          fi
+          CREDS_B64=$(printf '%s' "$GOOGLE_APPLICATION_CREDENTIALS_JSON" | base64 -w 0)
+          PROJECT_B64=$(printf '%s' "${GOOGLE_PROJECT_ID:-}" | base64 -w 0)
+          sshpass -e ssh \
+            -p "$VPS_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$VPS_USERNAME@$VPS_HOST" \
+            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' bash -s" <<'REMOTE'
+          set -euo pipefail
+          install -m 700 -d "$DEPLOY_PATH/.secrets"
+          printf '%s' "$CREDS_B64" | base64 -d > "$DEPLOY_PATH/.secrets/google-application-credentials.json"
+          chmod 600 "$DEPLOY_PATH/.secrets/google-application-credentials.json"
+          if [ -n "${PROJECT_B64:-}" ]; then
+            PROJECT_ID=$(printf '%s' "$PROJECT_B64" | base64 -d)
+            if [ -n "$PROJECT_ID" ]; then
+              printf 'GOOGLE_PROJECT_ID=%s\n' "$PROJECT_ID" > "$DEPLOY_PATH/.env"
+              chmod 600 "$DEPLOY_PATH/.env"
+            fi
+          fi
+          REMOTE
+
+      - name: Smoke test deployed application
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          sshpass -e ssh \
+            -p "$VPS_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$VPS_USERNAME@$VPS_HOST" \
+            "DEPLOY_PATH='$VPS_DEPLOY_PATH' EXPECTED_REVISION='$REVISION' bash -s" <<'REMOTE'
+          set -euo pipefail
+          source "$DEPLOY_PATH/.deploy/last-deploy.env"
+          test "$REVISION" = "$EXPECTED_REVISION"
+          test -x "$DEPLOY_PATH/start.sh"
+          test -x "$START_COMMAND"
+          if [ -f "$DEPLOY_PATH/.deploy/app.pid" ]; then
+            kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")"
+          fi
+          PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning" \
+            "$PYTHON_COMMAND" -c 'import analytics_mcp.http_server; print("analytics_mcp http import ok")'
+          test -f "$DEPLOY_PATH/health.json"
+          echo "Remote smoke test passed for $REVISION using $START_COMMAND"
+          REMOTE
