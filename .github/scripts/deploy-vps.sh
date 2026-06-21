@@ -36,6 +36,7 @@ rm -rf \
   "$DEPLOY_PATH/start.sh" \
   "$DEPLOY_PATH/index.html" \
   "$DEPLOY_PATH/health.json" \
+  "$DEPLOY_PATH/.htaccess" \
   "$DEPLOY_PATH/REVISION" \
   "$DEPLOY_PATH/analytics-mcp-deploy.tar.gz"
 
@@ -49,7 +50,7 @@ if [ -z "$WHEEL_PATH" ]; then
 fi
 
 VENV_DIR="$DEPLOY_PATH/.venv"
-START_COMMAND="$VENV_DIR/bin/analytics-mcp"
+START_COMMAND="$VENV_DIR/bin/analytics-mcp-http"
 PYTHON_COMMAND="$VENV_DIR/bin/python"
 INSTALL_MODE="virtualenv"
 rm -rf "$VENV_DIR"
@@ -60,7 +61,7 @@ else
   echo "Could not create a virtualenv with $PYTHON_BIN; falling back to a user-level pip install." >&2
   "$PYTHON_BIN" -m pip install --user --upgrade --force-reinstall "$WHEEL_PATH"
   USER_BASE=$("$PYTHON_BIN" -m site --user-base)
-  START_COMMAND="$USER_BASE/bin/analytics-mcp"
+  START_COMMAND="$USER_BASE/bin/analytics-mcp-http"
   PYTHON_COMMAND="$PYTHON_BIN"
   INSTALL_MODE="user"
 fi
@@ -68,9 +69,26 @@ fi
 cat > "$DEPLOY_PATH/start.sh" <<EOF_START
 #!/usr/bin/env bash
 set -euo pipefail
-exec "$START_COMMAND" "\$@"
+cd "$(dirname "\$0")"
+if [ -f ./.env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
+if [ -f ./.secrets/google-application-credentials.json ]; then
+  export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/.secrets/google-application-credentials.json"
+fi
+exec "$START_COMMAND" --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "\$@"
 EOF_START
 chmod +x "$DEPLOY_PATH/start.sh"
+
+if [ "${AUTO_START_MCP_HTTP:-1}" = "1" ]; then
+  if [ -f "$DEPLOY_DIR/app.pid" ] && kill -0 "$(cat "$DEPLOY_DIR/app.pid")" 2>/dev/null; then
+    kill "$(cat "$DEPLOY_DIR/app.pid")"
+  fi
+  nohup "$DEPLOY_PATH/start.sh" > "$DEPLOY_DIR/app.log" 2>&1 &
+  echo $! > "$DEPLOY_DIR/app.pid"
+fi
 
 cat > "$DEPLOY_DIR/last-deploy.env" <<EOF_ENV
 REVISION=$(printf %q "$REVISION")

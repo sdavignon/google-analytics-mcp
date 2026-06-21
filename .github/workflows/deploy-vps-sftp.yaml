@@ -8,6 +8,9 @@
 # - VPS_PORT: SSH/SFTP port. Defaults to 22.
 # - PYTHON_VERSION: Python version used for the build. Defaults to 3.13.
 # - VPS_PYTHON_BIN: Python executable on the VPS used for the virtualenv. Defaults to python3.
+# Optional Google Analytics runtime configuration:
+# - GOOGLE_APPLICATION_CREDENTIALS_JSON: Secret containing ADC/service-account JSON; do not use an API key.
+# - GOOGLE_PROJECT_ID: Repository/environment variable or secret for the Google Cloud project ID.
 name: Deploy to VPS via SFTP
 
 on:
@@ -82,10 +85,18 @@ jobs:
           #!/usr/bin/env bash
           set -euo pipefail
           cd "$(dirname "$0")"
-          if [ -x ./.venv/bin/analytics-mcp ]; then
-            exec ./.venv/bin/analytics-mcp "$@"
+          if [ -f ./.env ]; then
+            set -a
+            . ./.env
+            set +a
           fi
-          exec analytics-mcp "$@"
+          if [ -f ./.secrets/google-application-credentials.json ]; then
+            export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/.secrets/google-application-credentials.json"
+          fi
+          if [ -x ./.venv/bin/analytics-mcp-http ]; then
+            exec ./.venv/bin/analytics-mcp-http --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "$@"
+          fi
+          exec analytics-mcp-http --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "$@"
           SH
           chmod +x deploy/start.sh
           cat > deploy/index.html <<'HTML'
@@ -124,7 +135,8 @@ jobs:
               <main>
                 <h1>Analytics MCP is deployed</h1>
                 <p>The VPS deployment completed and the application files are present at the web root.</p>
-                <p>This project is an MCP stdio server, not a browser-based web app. Start it on the VPS with <code>./start.sh</code> or the installed <code>.venv/bin/analytics-mcp</code> command.</p>
+                <p>This project exposes MCP over Streamable HTTP when <code>./start.sh</code> is running behind your web server or reverse proxy.</p>
+                <p>MCP endpoint: <code>/mcp</code>. Health endpoint: <code>/health</code>.</p>
                 <p>Revision: <code>__REVISION__</code></p>
               </main>
             </body>
@@ -135,6 +147,14 @@ jobs:
           {"status":"deployed","service":"analytics-mcp","revision":"__REVISION__"}
           JSON
           sed -i "s/__REVISION__/$REVISION/g" deploy/health.json
+          cat > deploy/.htaccess <<'HTACCESS'
+          Options -Indexes
+          DirectoryIndex index.html
+
+          <FilesMatch "\.(py|toml|md|txt|gz|whl)$">
+            Require all denied
+          </FilesMatch>
+          HTACCESS
           cat > deploy/passenger_wsgi.py <<'PY'
           """Minimal DreamHost Passenger WSGI entrypoint for deployment health checks.
 
@@ -210,6 +230,37 @@ jobs:
             "$VPS_USERNAME@$VPS_HOST" \
             "bash '$VPS_DEPLOY_PATH/.deploy/deploy-vps.sh' '$VPS_DEPLOY_PATH' '$REVISION' '$VPS_PYTHON_BIN'"
 
+      - name: Install Google credentials on VPS
+        env:
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
+          GOOGLE_PROJECT_ID: ${{ vars.GOOGLE_PROJECT_ID || secrets.GOOGLE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
+            echo "No GOOGLE_APPLICATION_CREDENTIALS_JSON secret configured; skipping Google credentials install."
+            exit 0
+          fi
+          CREDS_B64=$(printf '%s' "$GOOGLE_APPLICATION_CREDENTIALS_JSON" | base64 -w 0)
+          PROJECT_B64=$(printf '%s' "${GOOGLE_PROJECT_ID:-}" | base64 -w 0)
+          sshpass -e ssh \
+            -p "$VPS_PORT" \
+            -o StrictHostKeyChecking=yes \
+            "$VPS_USERNAME@$VPS_HOST" \
+            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' bash -s" <<'REMOTE'
+          set -euo pipefail
+          install -m 700 -d "$DEPLOY_PATH/.secrets"
+          printf '%s' "$CREDS_B64" | base64 -d > "$DEPLOY_PATH/.secrets/google-application-credentials.json"
+          chmod 600 "$DEPLOY_PATH/.secrets/google-application-credentials.json"
+          if [ -n "${PROJECT_B64:-}" ]; then
+            PROJECT_ID=$(printf '%s' "$PROJECT_B64" | base64 -d)
+            if [ -n "$PROJECT_ID" ]; then
+              printf 'GOOGLE_PROJECT_ID=%s\n' "$PROJECT_ID" > "$DEPLOY_PATH/.env"
+              chmod 600 "$DEPLOY_PATH/.env"
+            fi
+          fi
+          REMOTE
+
       - name: Smoke test deployed application
         env:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
@@ -225,8 +276,11 @@ jobs:
           test "$REVISION" = "$EXPECTED_REVISION"
           test -x "$DEPLOY_PATH/start.sh"
           test -x "$START_COMMAND"
+          if [ -f "$DEPLOY_PATH/.deploy/app.pid" ]; then
+            kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")"
+          fi
           PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning" \
-            "$PYTHON_COMMAND" -c 'import analytics_mcp.server; print("analytics_mcp import ok")'
+            "$PYTHON_COMMAND" -c 'import analytics_mcp.http_server; print("analytics_mcp http import ok")'
           test -f "$DEPLOY_PATH/health.json"
           echo "Remote smoke test passed for $REVISION using $START_COMMAND"
           REMOTE
