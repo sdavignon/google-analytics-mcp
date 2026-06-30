@@ -60,6 +60,10 @@ async def root(_request):
     return RedirectResponse(url="/mcp")
 
 
+async def mcp_redirect(_request):
+    return RedirectResponse(url="/mcp/")
+
+
 def create_app() -> Starlette:
     """Creates the ASGI app that exposes the MCP server at /mcp."""
     transport = StreamableHTTPServerTransport(
@@ -85,6 +89,7 @@ def create_app() -> Starlette:
         routes=[
             Route("/", endpoint=root, methods=["GET"]),
             Route("/health", endpoint=health, methods=["GET"]),
+            Route("/mcp", endpoint=mcp_redirect, methods=["GET"]),
             Mount("/mcp", app=McpStreamableHttpApp(transport)),
         ],
         lifespan=lifespan,
