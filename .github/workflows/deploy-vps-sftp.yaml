@@ -275,14 +275,30 @@ jobs:
           test "$REVISION" = "$EXPECTED_REVISION"
           test -x "$DEPLOY_PATH/start.sh"
           test -x "$START_COMMAND"
-          if [ -f "$DEPLOY_PATH/.deploy/app.pid" ]; then
-            kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")"
+          if [ -f "$DEPLOY_PATH/.deploy/app.pid" ] && ! kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")" 2>/dev/null; then
+            echo "Stale app pid found; restarting MCP HTTP server." >&2
+            rm -f "$DEPLOY_PATH/.deploy/app.pid"
+          fi
+          if [ ! -f "$DEPLOY_PATH/.deploy/app.pid" ]; then
+            nohup "$DEPLOY_PATH/start.sh" > "$DEPLOY_PATH/.deploy/app.log" 2>&1 &
+            echo $! > "$DEPLOY_PATH/.deploy/app.pid"
           fi
           PORT_VALUE=$(grep '^PORT=' "$DEPLOY_PATH/.env" 2>/dev/null | cut -d= -f2- || true)
           MCP_HTTP_PORT_VALUE=$(grep '^MCP_HTTP_PORT=' "$DEPLOY_PATH/.env" 2>/dev/null | cut -d= -f2- || true)
           LOCAL_PORT="${PORT_VALUE:-${MCP_HTTP_PORT_VALUE:-8000}}"
           export LOCAL_PORT
-          "$PYTHON_COMMAND" -c 'import os, urllib.request; print(urllib.request.urlopen("http://127.0.0.1:{}/health".format(os.environ["LOCAL_PORT"]), timeout=10).read().decode())'
+          for attempt in $(seq 1 30); do
+            if "$PYTHON_COMMAND" -c 'import os, urllib.request; print(urllib.request.urlopen("http://127.0.0.1:{}/health".format(os.environ["LOCAL_PORT"]), timeout=5).read().decode())'; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "MCP HTTP server did not become healthy on port $LOCAL_PORT." >&2
+              echo "--- app.log ---" >&2
+              tail -n 200 "$DEPLOY_PATH/.deploy/app.log" >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
           grep -q 'RewriteRule ^mcp' "$DEPLOY_PATH/.htaccess"
           grep -q 'RewriteRule ^health' "$DEPLOY_PATH/.htaccess"
           PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning" \
