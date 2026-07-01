@@ -165,6 +165,8 @@ jobs:
           DirectoryIndex index.html
           RewriteEngine On
           RewriteRule ^health/?$ http://127.0.0.1:8000/health [P,L]
+          RewriteRule ^oauth(/.*)?$ http://127.0.0.1:8000/oauth$1 [P,L]
+          RewriteRule ^\.well-known/(oauth-authorization-server|oauth-protected-resource|openid-configuration)$ http://127.0.0.1:8000/.well-known/$1 [P,L]
           RewriteRule ^mcp(/.*)?$ http://127.0.0.1:8000/mcp$1 [P,L]
 
           <FilesMatch "\.(py|toml|md|txt|gz|whl)$">
@@ -336,6 +338,8 @@ jobs:
             sleep 2
           done
           grep -q 'RewriteRule ^mcp' "$DEPLOY_PATH/.htaccess"
+          grep -q 'RewriteRule ^oauth' "$DEPLOY_PATH/.htaccess"
+          grep -q 'RewriteRule ^\.well-known' "$DEPLOY_PATH/.htaccess"
           grep -q 'RewriteRule ^health' "$DEPLOY_PATH/.htaccess"
           PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning" \
             "$PYTHON_COMMAND" -c 'import analytics_mcp.http_server; print("analytics_mcp http import ok")'
