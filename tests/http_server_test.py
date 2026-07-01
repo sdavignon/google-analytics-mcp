@@ -74,3 +74,76 @@ def test_mcp_accepts_configured_bearer_token(monkeypatch):
 
     assert response.status_code == 307
     assert response.headers["location"] == "/mcp/"
+
+
+def test_oauth_token_issues_bearer_token_for_basic_client_credentials(monkeypatch):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "issued-token")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_ID", "private-client")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_SECRET", "private-secret")
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/oauth/token",
+            data={"grant_type": "client_credentials"},
+            auth=("private-client", "private-secret"),
+        )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.json() == {
+        "access_token": "issued-token",
+        "token_type": "Bearer",
+    }
+
+
+def test_oauth_token_accepts_form_client_credentials(monkeypatch):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "issued-token")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_ID", "private-client")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_SECRET", "private-secret")
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": "private-client",
+                "client_secret": "private-secret",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["access_token"] == "issued-token"
+
+
+def test_oauth_token_rejects_invalid_client_credentials(monkeypatch):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "issued-token")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_ID", "private-client")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_SECRET", "private-secret")
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/oauth/token",
+            data={"grant_type": "client_credentials"},
+            auth=("private-client", "wrong-secret"),
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Basic"
+    assert response.json() == {"error": "invalid_client"}
+
+
+def test_oauth_token_rejects_unsupported_grant_type(monkeypatch):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "issued-token")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_ID", "private-client")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_SECRET", "private-secret")
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/oauth/token",
+            data={"grant_type": "authorization_code"},
+            auth=("private-client", "private-secret"),
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "unsupported_grant_type"}

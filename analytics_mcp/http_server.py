@@ -17,7 +17,10 @@
 """HTTP entry point for the Google Analytics MCP server."""
 
 from contextlib import asynccontextmanager
+import base64
 import os
+import secrets
+from urllib.parse import parse_qs
 
 import anyio
 import uvicorn
@@ -52,6 +55,89 @@ class McpStreamableHttpApp:
         await self._transport.handle_request(scope, receive, send)
 
 
+def _oauth_configured_token() -> str:
+    return os.getenv("MCP_AUTH_TOKEN", "").strip()
+
+
+def _oauth_client_id() -> str:
+    return os.getenv("MCP_OAUTH_CLIENT_ID", "").strip()
+
+
+def _oauth_client_secret() -> str:
+    return os.getenv("MCP_OAUTH_CLIENT_SECRET", "").strip()
+
+
+def _extract_basic_client_credentials(request) -> tuple[str, str]:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, credentials = authorization.partition(" ")
+    if scheme.lower() != "basic" or not credentials:
+        return "", ""
+
+    try:
+        decoded = base64.b64decode(credentials, validate=True).decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        return "", ""
+
+    client_id, separator, client_secret = decoded.partition(":")
+    if not separator:
+        return "", ""
+    return client_id, client_secret
+
+
+async def oauth_token(request):
+    """Issues the configured MCP bearer token for valid private OAuth clients."""
+    access_token = _oauth_configured_token()
+    expected_client_id = _oauth_client_id()
+    expected_client_secret = _oauth_client_secret()
+
+    if not access_token:
+        return JSONResponse(
+            {
+                "error": "server_error",
+                "error_description": "MCP_AUTH_TOKEN is not configured",
+            },
+            status_code=503,
+        )
+
+    if not expected_client_id or not expected_client_secret:
+        return JSONResponse(
+            {
+                "error": "server_error",
+                "error_description": "MCP OAuth client credentials are not configured",
+            },
+            status_code=503,
+        )
+
+    body = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    grant_type = body.get("grant_type", [""])[0]
+    if grant_type != "client_credentials":
+        return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+
+    client_id, client_secret = _extract_basic_client_credentials(request)
+    if not client_id and not client_secret:
+        client_id = body.get("client_id", [""])[0]
+        client_secret = body.get("client_secret", [""])[0]
+
+    client_id_matches = secrets.compare_digest(client_id, expected_client_id)
+    client_secret_matches = secrets.compare_digest(
+        client_secret, expected_client_secret
+    )
+    if not client_id_matches or not client_secret_matches:
+        return JSONResponse(
+            {"error": "invalid_client"},
+            status_code=401,
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    return JSONResponse(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+        },
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
 async def health(_request):
     return JSONResponse({"status": "ok", "service": "analytics-mcp"})
 
@@ -79,7 +165,7 @@ class BearerAuthMiddleware:
         path = scope.get("path", "")
 
         # Leave health check public.
-        if path == "/health":
+        if path in {"/health", "/oauth/token"}:
             await self.app(scope, receive, send)
             return
 
@@ -135,6 +221,7 @@ def create_app() -> Starlette:
         routes=[
             Route("/", endpoint=root, methods=["GET"]),
             Route("/health", endpoint=health, methods=["GET"]),
+            Route("/oauth/token", endpoint=oauth_token, methods=["POST"]),
             Route("/mcp", endpoint=mcp_redirect, methods=["GET"]),
             Mount("/mcp", app=McpStreamableHttpApp(transport)),
         ],
