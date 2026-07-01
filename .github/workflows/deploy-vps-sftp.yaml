@@ -94,6 +94,18 @@ jobs:
           if [ -f ./.secrets/google-application-credentials.json ]; then
             export GOOGLE_APPLICATION_CREDENTIALS="$APP_DIR/.secrets/google-application-credentials.json"
           fi
+          if [ -f ./.secrets/mcp-auth-token ]; then
+            export MCP_AUTH_TOKEN="$(cat "$APP_DIR/.secrets/mcp-auth-token")"
+          fi
+          if [ -f ./.secrets/mcp-oauth-client-id ]; then
+            export MCP_OAUTH_CLIENT_ID="$(cat "$APP_DIR/.secrets/mcp-oauth-client-id")"
+          fi
+          if [ -f ./.secrets/mcp-oauth-client-secret ]; then
+            export MCP_OAUTH_CLIENT_SECRET="$(cat "$APP_DIR/.secrets/mcp-oauth-client-secret")"
+          fi
+          if [ -f ./.secrets/mcp-oauth-redirect-uris ]; then
+            export MCP_OAUTH_REDIRECT_URIS="$(cat "$APP_DIR/.secrets/mcp-oauth-redirect-uris")"
+          fi
           if [ -x ./.venv/bin/analytics-mcp-http ]; then
             exec ./.venv/bin/analytics-mcp-http --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "$@"
           fi
@@ -153,6 +165,8 @@ jobs:
           DirectoryIndex index.html
           RewriteEngine On
           RewriteRule ^health/?$ http://127.0.0.1:8000/health [P,L]
+          RewriteRule ^oauth(/.*)?$ http://127.0.0.1:8000/oauth$1 [P,L]
+          RewriteRule ^\.well-known/(oauth-authorization-server|oauth-protected-resource|openid-configuration)$ http://127.0.0.1:8000/.well-known/$1 [P,L]
           RewriteRule ^mcp(/.*)?$ http://127.0.0.1:8000/mcp$1 [P,L]
 
           <FilesMatch "\.(py|toml|md|txt|gz|whl)$">
@@ -222,20 +236,26 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
           GOOGLE_PROJECT_ID: ${{ vars.GOOGLE_PROJECT_ID || secrets.GOOGLE_PROJECT_ID }}
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
+          MCP_OAUTH_CLIENT_ID: ${{ vars.MCP_OAUTH_CLIENT_ID || secrets.MCP_OAUTH_CLIENT_ID }}
+          MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          MCP_OAUTH_REDIRECT_URIS: ${{ vars.MCP_OAUTH_REDIRECT_URIS || secrets.MCP_OAUTH_REDIRECT_URIS }}
         run: |
           set -euo pipefail
-          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ] && [ -z "${MCP_AUTH_TOKEN:-}" ]; then
-            echo "No Google credentials or MCP auth token secrets configured; skipping secrets install."
+          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ] && [ -z "${MCP_AUTH_TOKEN:-}" ] && [ -z "${MCP_OAUTH_CLIENT_ID:-}" ] && [ -z "${MCP_OAUTH_CLIENT_SECRET:-}" ] && [ -z "${MCP_OAUTH_REDIRECT_URIS:-}" ]; then
+            echo "No Google credentials, MCP auth token, or OAuth client secrets configured; skipping secrets install."
             exit 0
           fi
           CREDS_B64=$(printf '%s' "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" | base64 -w 0)
           PROJECT_B64=$(printf '%s' "${GOOGLE_PROJECT_ID:-}" | base64 -w 0)
           MCP_AUTH_TOKEN_B64=$(printf '%s' "${MCP_AUTH_TOKEN:-}" | base64 -w 0)
+          MCP_OAUTH_CLIENT_ID_B64=$(printf '%s' "${MCP_OAUTH_CLIENT_ID:-}" | base64 -w 0)
+          MCP_OAUTH_CLIENT_SECRET_B64=$(printf '%s' "${MCP_OAUTH_CLIENT_SECRET:-}" | base64 -w 0)
+          MCP_OAUTH_REDIRECT_URIS_B64=$(printf '%s' "${MCP_OAUTH_REDIRECT_URIS:-}" | base64 -w 0)
           sshpass -e ssh \
             -p "$VPS_PORT" \
             -o StrictHostKeyChecking=yes \
             "$VPS_USERNAME@$VPS_HOST" \
-            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' MCP_AUTH_TOKEN_B64='$MCP_AUTH_TOKEN_B64' bash -s" <<'REMOTE'
+            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' MCP_AUTH_TOKEN_B64='$MCP_AUTH_TOKEN_B64' MCP_OAUTH_CLIENT_ID_B64='$MCP_OAUTH_CLIENT_ID_B64' MCP_OAUTH_CLIENT_SECRET_B64='$MCP_OAUTH_CLIENT_SECRET_B64' MCP_OAUTH_REDIRECT_URIS_B64='$MCP_OAUTH_REDIRECT_URIS_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           install -m 700 -d "$DEPLOY_PATH/.secrets"
           if [ -n "${CREDS_B64:-}" ]; then
@@ -251,6 +271,18 @@ jobs:
             printf '%s' "$MCP_AUTH_TOKEN_B64" | base64 -d > "$DEPLOY_PATH/.secrets/mcp-auth-token"
             chmod 600 "$DEPLOY_PATH/.secrets/mcp-auth-token"
           fi
+          if [ -n "${MCP_OAUTH_CLIENT_ID_B64:-}" ]; then
+            printf '%s' "$MCP_OAUTH_CLIENT_ID_B64" | base64 -d > "$DEPLOY_PATH/.secrets/mcp-oauth-client-id"
+            chmod 600 "$DEPLOY_PATH/.secrets/mcp-oauth-client-id"
+          fi
+          if [ -n "${MCP_OAUTH_CLIENT_SECRET_B64:-}" ]; then
+            printf '%s' "$MCP_OAUTH_CLIENT_SECRET_B64" | base64 -d > "$DEPLOY_PATH/.secrets/mcp-oauth-client-secret"
+            chmod 600 "$DEPLOY_PATH/.secrets/mcp-oauth-client-secret"
+          fi
+          if [ -n "${MCP_OAUTH_REDIRECT_URIS_B64:-}" ]; then
+            printf '%s' "$MCP_OAUTH_REDIRECT_URIS_B64" | base64 -d > "$DEPLOY_PATH/.secrets/mcp-oauth-redirect-uris"
+            chmod 600 "$DEPLOY_PATH/.secrets/mcp-oauth-redirect-uris"
+          fi
           if [ -n "${PROJECT_B64:-}" ]; then
             PROJECT_ID=$(printf '%s' "$PROJECT_B64" | base64 -d)
             if [ -n "$PROJECT_ID" ]; then
@@ -258,6 +290,12 @@ jobs:
               chmod 600 "$DEPLOY_PATH/.env"
             fi
           fi
+          if [ -f "$DEPLOY_PATH/.deploy/app.pid" ] && kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")" 2>/dev/null; then
+            kill "$(cat "$DEPLOY_PATH/.deploy/app.pid")"
+            rm -f "$DEPLOY_PATH/.deploy/app.pid"
+          fi
+          nohup "$DEPLOY_PATH/start.sh" > "$DEPLOY_PATH/.deploy/app.log" 2>&1 &
+          echo $! > "$DEPLOY_PATH/.deploy/app.pid"
           REMOTE
 
       - name: Smoke test deployed application
@@ -275,15 +313,33 @@ jobs:
           test "$REVISION" = "$EXPECTED_REVISION"
           test -x "$DEPLOY_PATH/start.sh"
           test -x "$START_COMMAND"
-          if [ -f "$DEPLOY_PATH/.deploy/app.pid" ]; then
-            kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")"
+          if [ -f "$DEPLOY_PATH/.deploy/app.pid" ] && ! kill -0 "$(cat "$DEPLOY_PATH/.deploy/app.pid")" 2>/dev/null; then
+            echo "Stale app pid found; restarting MCP HTTP server." >&2
+            rm -f "$DEPLOY_PATH/.deploy/app.pid"
+          fi
+          if [ ! -f "$DEPLOY_PATH/.deploy/app.pid" ]; then
+            nohup "$DEPLOY_PATH/start.sh" > "$DEPLOY_PATH/.deploy/app.log" 2>&1 &
+            echo $! > "$DEPLOY_PATH/.deploy/app.pid"
           fi
           PORT_VALUE=$(grep '^PORT=' "$DEPLOY_PATH/.env" 2>/dev/null | cut -d= -f2- || true)
           MCP_HTTP_PORT_VALUE=$(grep '^MCP_HTTP_PORT=' "$DEPLOY_PATH/.env" 2>/dev/null | cut -d= -f2- || true)
           LOCAL_PORT="${PORT_VALUE:-${MCP_HTTP_PORT_VALUE:-8000}}"
           export LOCAL_PORT
-          "$PYTHON_COMMAND" -c 'import os, urllib.request; print(urllib.request.urlopen("http://127.0.0.1:{}/health".format(os.environ["LOCAL_PORT"]), timeout=10).read().decode())'
+          for attempt in $(seq 1 30); do
+            if "$PYTHON_COMMAND" -c 'import os, urllib.request; print(urllib.request.urlopen("http://127.0.0.1:{}/health".format(os.environ["LOCAL_PORT"]), timeout=5).read().decode())'; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "MCP HTTP server did not become healthy on port $LOCAL_PORT." >&2
+              echo "--- app.log ---" >&2
+              tail -n 200 "$DEPLOY_PATH/.deploy/app.log" >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
           grep -q 'RewriteRule ^mcp' "$DEPLOY_PATH/.htaccess"
+          grep -q 'RewriteRule ^oauth' "$DEPLOY_PATH/.htaccess"
+          grep -q 'RewriteRule ^\.well-known' "$DEPLOY_PATH/.htaccess"
           grep -q 'RewriteRule ^health' "$DEPLOY_PATH/.htaccess"
           PYTHONWARNINGS="ignore::UserWarning,ignore::FutureWarning" \
             "$PYTHON_COMMAND" -c 'import analytics_mcp.http_server; print("analytics_mcp http import ok")'
