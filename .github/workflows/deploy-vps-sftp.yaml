@@ -103,6 +103,9 @@ jobs:
           if [ -f ./.secrets/mcp-oauth-client-secret ]; then
             export MCP_OAUTH_CLIENT_SECRET="$(cat "$APP_DIR/.secrets/mcp-oauth-client-secret")"
           fi
+          if [ -f ./.secrets/mcp-oauth-redirect-uris ]; then
+            export MCP_OAUTH_REDIRECT_URIS="$(cat "$APP_DIR/.secrets/mcp-oauth-redirect-uris")"
+          fi
           if [ -x ./.venv/bin/analytics-mcp-http ]; then
             exec ./.venv/bin/analytics-mcp-http --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "$@"
           fi
@@ -233,9 +236,10 @@ jobs:
           MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
           MCP_OAUTH_CLIENT_ID: ${{ vars.MCP_OAUTH_CLIENT_ID || secrets.MCP_OAUTH_CLIENT_ID }}
           MCP_OAUTH_CLIENT_SECRET: ${{ secrets.MCP_OAUTH_CLIENT_SECRET }}
+          MCP_OAUTH_REDIRECT_URIS: ${{ vars.MCP_OAUTH_REDIRECT_URIS || secrets.MCP_OAUTH_REDIRECT_URIS }}
         run: |
           set -euo pipefail
-          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ] && [ -z "${MCP_AUTH_TOKEN:-}" ] && [ -z "${MCP_OAUTH_CLIENT_ID:-}" ] && [ -z "${MCP_OAUTH_CLIENT_SECRET:-}" ]; then
+          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ] && [ -z "${MCP_AUTH_TOKEN:-}" ] && [ -z "${MCP_OAUTH_CLIENT_ID:-}" ] && [ -z "${MCP_OAUTH_CLIENT_SECRET:-}" ] && [ -z "${MCP_OAUTH_REDIRECT_URIS:-}" ]; then
             echo "No Google credentials, MCP auth token, or OAuth client secrets configured; skipping secrets install."
             exit 0
           fi
@@ -244,11 +248,12 @@ jobs:
           MCP_AUTH_TOKEN_B64=$(printf '%s' "${MCP_AUTH_TOKEN:-}" | base64 -w 0)
           MCP_OAUTH_CLIENT_ID_B64=$(printf '%s' "${MCP_OAUTH_CLIENT_ID:-}" | base64 -w 0)
           MCP_OAUTH_CLIENT_SECRET_B64=$(printf '%s' "${MCP_OAUTH_CLIENT_SECRET:-}" | base64 -w 0)
+          MCP_OAUTH_REDIRECT_URIS_B64=$(printf '%s' "${MCP_OAUTH_REDIRECT_URIS:-}" | base64 -w 0)
           sshpass -e ssh \
             -p "$VPS_PORT" \
             -o StrictHostKeyChecking=yes \
             "$VPS_USERNAME@$VPS_HOST" \
-            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' MCP_AUTH_TOKEN_B64='$MCP_AUTH_TOKEN_B64' MCP_OAUTH_CLIENT_ID_B64='$MCP_OAUTH_CLIENT_ID_B64' MCP_OAUTH_CLIENT_SECRET_B64='$MCP_OAUTH_CLIENT_SECRET_B64' bash -s" <<'REMOTE'
+            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' MCP_AUTH_TOKEN_B64='$MCP_AUTH_TOKEN_B64' MCP_OAUTH_CLIENT_ID_B64='$MCP_OAUTH_CLIENT_ID_B64' MCP_OAUTH_CLIENT_SECRET_B64='$MCP_OAUTH_CLIENT_SECRET_B64' MCP_OAUTH_REDIRECT_URIS_B64='$MCP_OAUTH_REDIRECT_URIS_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           install -m 700 -d "$DEPLOY_PATH/.secrets"
           if [ -n "${CREDS_B64:-}" ]; then
@@ -271,6 +276,10 @@ jobs:
           if [ -n "${MCP_OAUTH_CLIENT_SECRET_B64:-}" ]; then
             printf '%s' "$MCP_OAUTH_CLIENT_SECRET_B64" | base64 -d > "$DEPLOY_PATH/.secrets/mcp-oauth-client-secret"
             chmod 600 "$DEPLOY_PATH/.secrets/mcp-oauth-client-secret"
+          fi
+          if [ -n "${MCP_OAUTH_REDIRECT_URIS_B64:-}" ]; then
+            printf '%s' "$MCP_OAUTH_REDIRECT_URIS_B64" | base64 -d > "$DEPLOY_PATH/.secrets/mcp-oauth-redirect-uris"
+            chmod 600 "$DEPLOY_PATH/.secrets/mcp-oauth-redirect-uris"
           fi
           if [ -n "${PROJECT_B64:-}" ]; then
             PROJECT_ID=$(printf '%s' "$PROJECT_B64" | base64 -d)

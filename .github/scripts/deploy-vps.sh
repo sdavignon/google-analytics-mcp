@@ -88,6 +88,9 @@ fi
 if [ -f ./.secrets/mcp-oauth-client-secret ]; then
   export MCP_OAUTH_CLIENT_SECRET="\$(cat "\$APP_DIR/.secrets/mcp-oauth-client-secret")"
 fi
+if [ -f ./.secrets/mcp-oauth-redirect-uris ]; then
+  export MCP_OAUTH_REDIRECT_URIS="\$(cat "\$APP_DIR/.secrets/mcp-oauth-redirect-uris")"
+fi
 exec "$START_COMMAND" --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "\$@"
 EOF_START
 chmod +x "$DEPLOY_PATH/start.sh"
