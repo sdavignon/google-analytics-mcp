@@ -166,7 +166,7 @@ jobs:
           RewriteEngine On
           RewriteRule ^health/?$ http://127.0.0.1:8000/health [P,L]
           RewriteRule ^oauth(/.*)?$ http://127.0.0.1:8000/oauth$1 [P,L]
-          RewriteRule ^\.well-known/(oauth-authorization-server|oauth-protected-resource|openid-configuration)$ http://127.0.0.1:8000/.well-known/$1 [P,L]
+          RewriteRule ^\.well-known/(oauth-authorization-server|oauth-protected-resource/mcp/?|openid-configuration)$ http://127.0.0.1:8000/.well-known/$1 [P,L]
           RewriteRule ^mcp(/.*)?$ http://127.0.0.1:8000/mcp$1 [P,L]
 
           <FilesMatch "\.(py|toml|md|txt|gz|whl)$">

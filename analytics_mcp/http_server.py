@@ -308,15 +308,17 @@ class BearerAuthMiddleware:
 
         path = scope.get("path", "")
 
-        # Leave health check public.
-        if path in {
+        public_paths = {
+            "/",
             "/health",
             "/oauth/authorize",
             "/oauth/token",
             "/.well-known/oauth-authorization-server",
-            "/.well-known/oauth-protected-resource",
-            "/.well-known/openid-configuration",
-        }:
+            "/.well-known/oauth-protected-resource/mcp",
+            "/.well-known/oauth-protected-resource/mcp/",
+        }
+
+        if path in public_paths:
             await self.app(scope, receive, send)
             return
 
@@ -383,7 +385,12 @@ def create_app() -> Starlette:
                 methods=["GET"],
             ),
             Route(
-                "/.well-known/oauth-protected-resource",
+                "/.well-known/oauth-protected-resource/mcp",
+                endpoint=oauth_protected_resource_metadata,
+                methods=["GET"],
+            ),
+            Route(
+                "/.well-known/oauth-protected-resource/mcp/",
                 endpoint=oauth_protected_resource_metadata,
                 methods=["GET"],
             ),

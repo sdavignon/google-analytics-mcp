@@ -104,7 +104,7 @@ DirectoryIndex index.html
 RewriteEngine On
 RewriteRule ^health/?$ http://$MCP_HTTP_BIND_HOST:$MCP_HTTP_BIND_PORT/health [P,L]
 RewriteRule ^oauth(/.*)?$ http://$MCP_HTTP_BIND_HOST:$MCP_HTTP_BIND_PORT/oauth\$1 [P,L]
-RewriteRule ^\.well-known/(oauth-authorization-server|oauth-protected-resource|openid-configuration)$ http://$MCP_HTTP_BIND_HOST:$MCP_HTTP_BIND_PORT/.well-known/\$1 [P,L]
+RewriteRule ^\.well-known/(oauth-authorization-server|oauth-protected-resource/mcp/?|openid-configuration)$ http://$MCP_HTTP_BIND_HOST:$MCP_HTTP_BIND_PORT/.well-known/\$1 [P,L]
 RewriteRule ^mcp(/.*)?$ http://$MCP_HTTP_BIND_HOST:$MCP_HTTP_BIND_PORT/mcp\$1 [P,L]
 
 <FilesMatch "\.(py|toml|md|txt|gz|whl)$">

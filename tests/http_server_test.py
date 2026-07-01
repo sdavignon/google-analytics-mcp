@@ -174,7 +174,7 @@ def test_oauth_protected_resource_metadata_is_public(monkeypatch):
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
 
     with TestClient(create_app(), base_url="https://mcp.example.com") as client:
-        response = client.get("/.well-known/oauth-protected-resource")
+        response = client.get("/.well-known/oauth-protected-resource/mcp")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -182,6 +182,26 @@ def test_oauth_protected_resource_metadata_is_public(monkeypatch):
         "authorization_servers": ["https://mcp.example.com"],
         "bearer_methods_supported": ["header"],
     }
+
+
+def test_root_redirect_remains_public_without_auth_token(monkeypatch):
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+
+    with TestClient(create_app()) as client:
+        response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/mcp"
+
+
+def test_oauth_protected_resource_metadata_slash_variant_is_public(monkeypatch):
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+
+    with TestClient(create_app(), base_url="https://mcp.example.com") as client:
+        response = client.get("/.well-known/oauth-protected-resource/mcp/")
+
+    assert response.status_code == 200
+    assert response.json()["resource"] == "https://mcp.example.com/mcp"
 
 
 def test_oauth_authorize_issues_code_and_preserves_state(monkeypatch):
