@@ -11,6 +11,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 GOOGLE_CREDENTIALS_FILE = BASE_DIR / ".secrets" / "google-application-credentials.json"
+MCP_AUTH_TOKEN_FILE = BASE_DIR / ".secrets" / "mcp-auth-token"
 
 
 def configure_google_application_credentials() -> None:
@@ -33,7 +34,16 @@ def configure_google_application_credentials() -> None:
         os.environ.setdefault("GOOGLE_PROJECT_ID", project_id)
 
 
+def configure_mcp_auth_token() -> None:
+    """Sets the MCP bearer token from the deployment secret file."""
+    if MCP_AUTH_TOKEN_FILE.exists():
+        os.environ["MCP_AUTH_TOKEN"] = MCP_AUTH_TOKEN_FILE.read_text(
+            encoding="utf-8"
+        ).strip()
+
+
 configure_google_application_credentials()
+configure_mcp_auth_token()
 
 from analytics_mcp.http_server import create_app
 

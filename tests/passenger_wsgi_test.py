@@ -13,6 +13,8 @@ def test_passenger_wsgi_sets_adc_environment_before_app_import(tmp_path, monkeyp
     secrets_dir.mkdir()
     credentials_file = secrets_dir / "google-application-credentials.json"
     credentials_file.write_text('{"project_id": "test-project"}', encoding="utf-8")
+    auth_token_file = secrets_dir / "mcp-auth-token"
+    auth_token_file.write_text("secret-token\n", encoding="utf-8")
 
     imported_env = {}
     fake_http_server = type(sys)("analytics_mcp.http_server")
@@ -23,6 +25,7 @@ def test_passenger_wsgi_sets_adc_environment_before_app_import(tmp_path, monkeyp
         )
         imported_env["GOOGLE_CLOUD_PROJECT"] = os.environ.get("GOOGLE_CLOUD_PROJECT")
         imported_env["GOOGLE_PROJECT_ID"] = os.environ.get("GOOGLE_PROJECT_ID")
+        imported_env["MCP_AUTH_TOKEN"] = os.environ.get("MCP_AUTH_TOKEN")
         return "app"
 
     fake_http_server.create_app = create_app
@@ -30,6 +33,7 @@ def test_passenger_wsgi_sets_adc_environment_before_app_import(tmp_path, monkeyp
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
 
     spec = importlib.util.spec_from_file_location(
         "passenger_wsgi_test_entry", passenger_module
@@ -42,4 +46,5 @@ def test_passenger_wsgi_sets_adc_environment_before_app_import(tmp_path, monkeyp
         "GOOGLE_APPLICATION_CREDENTIALS": str(credentials_file),
         "GOOGLE_CLOUD_PROJECT": "test-project",
         "GOOGLE_PROJECT_ID": "test-project",
+        "MCP_AUTH_TOKEN": "secret-token",
     }

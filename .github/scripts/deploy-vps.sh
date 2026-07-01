@@ -69,14 +69,15 @@ fi
 cat > "$DEPLOY_PATH/start.sh" <<EOF_START
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "\$0")"
+APP_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+cd "\$APP_DIR"
 if [ -f ./.env ]; then
   set -a
   . ./.env
   set +a
 fi
 if [ -f ./.secrets/google-application-credentials.json ]; then
-  export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/.secrets/google-application-credentials.json"
+  export GOOGLE_APPLICATION_CREDENTIALS="\$APP_DIR/.secrets/google-application-credentials.json"
 fi
 exec "$START_COMMAND" --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "\$@"
 EOF_START

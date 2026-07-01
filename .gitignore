@@ -67,3 +67,6 @@ pylintrc
 pylintrc.test
 
 .agents/skills
+.secrets/
+.env
+*.json
