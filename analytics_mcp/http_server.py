@@ -60,6 +60,56 @@ async def root(_request):
     return RedirectResponse(url="/mcp")
 
 
+async def mcp_redirect(_request):
+    return RedirectResponse(url="/mcp/")
+
+
+class BearerAuthMiddleware:
+    """Simple bearer-token protection for public MCP HTTP endpoint."""
+
+    def __init__(self, app):
+        self.app = app
+        self.required_token = os.getenv("MCP_AUTH_TOKEN", "").strip()
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+
+        # Leave health check public.
+        if path == "/health":
+            await self.app(scope, receive, send)
+            return
+
+        # If no token is configured, fail closed instead of exposing GA data.
+        if not self.required_token:
+            response = JSONResponse(
+                {"error": "MCP_AUTH_TOKEN is not configured"},
+                status_code=503,
+            )
+            await response(scope, receive, send)
+            return
+
+        headers = {
+            key.decode("latin1").lower(): value.decode("latin1")
+            for key, value in scope.get("headers", [])
+        }
+
+        expected = f"Bearer {self.required_token}"
+        if headers.get("authorization") != expected:
+            response = JSONResponse(
+                {"error": "Unauthorized"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
 def create_app() -> Starlette:
     """Creates the ASGI app that exposes the MCP server at /mcp."""
     transport = StreamableHTTPServerTransport(
@@ -80,15 +130,17 @@ def create_app() -> Starlette:
                 yield
                 task_group.cancel_scope.cancel()
 
-    return Starlette(
+    app = Starlette(
         debug=False,
         routes=[
             Route("/", endpoint=root, methods=["GET"]),
             Route("/health", endpoint=health, methods=["GET"]),
+            Route("/mcp", endpoint=mcp_redirect, methods=["GET"]),
             Mount("/mcp", app=McpStreamableHttpApp(transport)),
         ],
         lifespan=lifespan,
     )
+    return BearerAuthMiddleware(app)
 
 
 def run_http_server():

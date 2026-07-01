@@ -63,7 +63,7 @@ jobs:
           mkdir -p deploy
           cp -R analytics_mcp deploy/analytics_mcp
           cp -R dist deploy/dist
-          cp pyproject.toml README.md LICENSE deploy/
+          cp pyproject.toml README.md LICENSE passenger_wsgi.py deploy/
           python - <<'PY'
           import tomllib
           from pathlib import Path
@@ -84,14 +84,15 @@ jobs:
           cat > deploy/start.sh <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
-          cd "$(dirname "$0")"
+          APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          cd "$APP_DIR"
           if [ -f ./.env ]; then
             set -a
             . ./.env
             set +a
           fi
           if [ -f ./.secrets/google-application-credentials.json ]; then
-            export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/.secrets/google-application-credentials.json"
+            export GOOGLE_APPLICATION_CREDENTIALS="$APP_DIR/.secrets/google-application-credentials.json"
           fi
           if [ -x ./.venv/bin/analytics-mcp-http ]; then
             exec ./.venv/bin/analytics-mcp-http --host "${MCP_HTTP_HOST:-127.0.0.1}" --port "${PORT:-${MCP_HTTP_PORT:-8000}}" "$@"
@@ -158,24 +159,6 @@ jobs:
             Require all denied
           </FilesMatch>
           HTACCESS
-          cat > deploy/passenger_wsgi.py <<'PY'
-          """Minimal DreamHost Passenger WSGI entrypoint for deployment health checks.
-
-          The Analytics MCP server itself runs over stdio via server.py or the
-          analytics-mcp console script. This WSGI app exists so Passenger-based
-          hosting has an application file at the web root.
-          """
-
-
-          def application(environ, start_response):
-              body = b"analytics-mcp deployment is present. Start the MCP server with server.py or analytics-mcp.\n"
-              headers = [
-                  ("Content-Type", "text/plain; charset=utf-8"),
-                  ("Content-Length", str(len(body))),
-              ]
-              start_response("200 OK", headers)
-              return [body]
-          PY
           chmod +x deploy/server.py
           printf '%s\n' "$REVISION" > deploy/REVISION
           tar -C deploy -czf analytics-mcp-deploy.tar.gz .
@@ -238,23 +221,36 @@ jobs:
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
           GOOGLE_PROJECT_ID: ${{ vars.GOOGLE_PROJECT_ID || secrets.GOOGLE_PROJECT_ID }}
+          MCP_AUTH_TOKEN: ${{ secrets.MCP_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ]; then
-            echo "No GOOGLE_APPLICATION_CREDENTIALS_JSON secret configured; skipping Google credentials install."
+          if [ -z "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" ] && [ -z "${MCP_AUTH_TOKEN:-}" ]; then
+            echo "No Google credentials or MCP auth token secrets configured; skipping secrets install."
             exit 0
           fi
-          CREDS_B64=$(printf '%s' "$GOOGLE_APPLICATION_CREDENTIALS_JSON" | base64 -w 0)
+          CREDS_B64=$(printf '%s' "${GOOGLE_APPLICATION_CREDENTIALS_JSON:-}" | base64 -w 0)
           PROJECT_B64=$(printf '%s' "${GOOGLE_PROJECT_ID:-}" | base64 -w 0)
+          MCP_AUTH_TOKEN_B64=$(printf '%s' "${MCP_AUTH_TOKEN:-}" | base64 -w 0)
           sshpass -e ssh \
             -p "$VPS_PORT" \
             -o StrictHostKeyChecking=yes \
             "$VPS_USERNAME@$VPS_HOST" \
-            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' bash -s" <<'REMOTE'
+            "DEPLOY_PATH='$VPS_DEPLOY_PATH' CREDS_B64='$CREDS_B64' PROJECT_B64='$PROJECT_B64' MCP_AUTH_TOKEN_B64='$MCP_AUTH_TOKEN_B64' bash -s" <<'REMOTE'
           set -euo pipefail
           install -m 700 -d "$DEPLOY_PATH/.secrets"
-          printf '%s' "$CREDS_B64" | base64 -d > "$DEPLOY_PATH/.secrets/google-application-credentials.json"
-          chmod 600 "$DEPLOY_PATH/.secrets/google-application-credentials.json"
+          if [ -n "${CREDS_B64:-}" ]; then
+            install -m 700 -d "$HOME/.config/gcloud"
+            printf '%s' "$CREDS_B64" | base64 -d > "$DEPLOY_PATH/.secrets/google-application-credentials.json"
+            cp "$DEPLOY_PATH/.secrets/google-application-credentials.json" "$HOME/.config/gcloud/application_default_credentials.json"
+            chmod 700 "$HOME/.config/gcloud"
+            chmod 600 "$DEPLOY_PATH/.secrets/google-application-credentials.json"
+            chmod 600 "$HOME/.config/gcloud/application_default_credentials.json"
+          fi
+          chmod 700 "$DEPLOY_PATH/.secrets"
+          if [ -n "${MCP_AUTH_TOKEN_B64:-}" ]; then
+            printf '%s' "$MCP_AUTH_TOKEN_B64" | base64 -d > "$DEPLOY_PATH/.secrets/mcp-auth-token"
+            chmod 600 "$DEPLOY_PATH/.secrets/mcp-auth-token"
+          fi
           if [ -n "${PROJECT_B64:-}" ]; then
             PROJECT_ID=$(printf '%s' "$PROJECT_B64" | base64 -d)
             if [ -n "$PROJECT_ID" ]; then
