@@ -1,6 +1,6 @@
 from starlette.testclient import TestClient
 
-from analytics_mcp.http_server import create_app
+from analytics_mcp.http_server import BearerAuthMiddleware, create_app
 
 
 def test_mcp_path_redirects_to_relative_trailing_slash(monkeypatch):
@@ -202,6 +202,52 @@ def test_oauth_protected_resource_metadata_slash_variant_is_public(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["resource"] == "https://mcp.example.com/mcp"
+
+
+def test_oauth_authorize_root_path_variant_bypasses_bearer_auth(monkeypatch):
+    import anyio
+
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
+    called = False
+
+    async def app(_scope, _receive, send):
+        nonlocal called
+        called = True
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 204,
+                "headers": [],
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    sent_messages = []
+
+    async def send(message):
+        sent_messages.append(message)
+
+    async def run_request():
+        middleware = BearerAuthMiddleware(app)
+        await middleware(
+            {
+                "type": "http",
+                "method": "GET",
+                "root_path": "/oauth",
+                "path": "/authorize",
+                "headers": [],
+            },
+            receive,
+            send,
+        )
+
+    anyio.run(run_request)
+
+    assert called
+    assert sent_messages[0]["status"] == 204
 
 
 def test_oauth_authorize_query_bypasses_bearer_auth(monkeypatch):

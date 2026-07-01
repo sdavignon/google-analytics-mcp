@@ -307,6 +307,7 @@ class BearerAuthMiddleware:
             return
 
         path = scope.get("path", "")
+        root_path = scope.get("root_path", "").rstrip("/")
 
         public_paths = {
             "/",
@@ -318,7 +319,14 @@ class BearerAuthMiddleware:
             "/.well-known/oauth-protected-resource/mcp/",
         }
 
-        if path in public_paths or path.startswith("/oauth/"):
+        candidate_paths = {path}
+        if root_path:
+            candidate_paths.add(f"{root_path}{path}")
+
+        if any(
+            candidate_path in public_paths or candidate_path.startswith("/oauth/")
+            for candidate_path in candidate_paths
+        ):
             await self.app(scope, receive, send)
             return
 
