@@ -330,6 +330,14 @@ class BearerAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        protects_mcp_path = any(
+            candidate_path == "/mcp" or candidate_path.startswith("/mcp/")
+            for candidate_path in candidate_paths
+        )
+        if not protects_mcp_path:
+            await self.app(scope, receive, send)
+            return
+
         # If no token is configured, fail closed instead of exposing GA data.
         if not self.required_token:
             response = JSONResponse(
