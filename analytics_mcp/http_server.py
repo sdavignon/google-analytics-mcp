@@ -318,7 +318,7 @@ class BearerAuthMiddleware:
             "/.well-known/oauth-protected-resource/mcp/",
         }
 
-        if path in public_paths:
+        if path in public_paths or path.startswith("/oauth/"):
             await self.app(scope, receive, send)
             return
 

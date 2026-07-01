@@ -204,6 +204,23 @@ def test_oauth_protected_resource_metadata_slash_variant_is_public(monkeypatch):
     assert response.json()["resource"] == "https://mcp.example.com/mcp"
 
 
+def test_oauth_authorize_query_bypasses_bearer_auth(monkeypatch):
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "secret-token")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_ID", "chatgpt-ga-mcp")
+    monkeypatch.setenv("MCP_OAUTH_CLIENT_SECRET", "private-secret")
+
+    with TestClient(create_app()) as client:
+        response = client.get(
+            "/oauth/authorize?response_type=code&client_id=chatgpt-ga-mcp&redirect_uri=https%3A%2F%2Fchatgpt.com%2Fconnector%2Fcallback",
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith(
+        "https://chatgpt.com/connector/callback?code="
+    )
+
+
 def test_oauth_authorize_issues_code_and_preserves_state(monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TOKEN", "issued-token")
     monkeypatch.setenv("MCP_OAUTH_CLIENT_ID", "private-client")
